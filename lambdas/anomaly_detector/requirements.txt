@@ -1,0 +1,1 @@
+# No external dependencies — boto3 and statistics are provided by the Lambda runtime / stdlib.

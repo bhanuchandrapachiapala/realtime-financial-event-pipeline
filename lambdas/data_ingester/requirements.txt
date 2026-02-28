@@ -1,0 +1,1 @@
+# No external dependencies — boto3 and urllib are provided by the Lambda runtime.
