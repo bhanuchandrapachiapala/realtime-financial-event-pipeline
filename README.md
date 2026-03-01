@@ -9,14 +9,14 @@ Here's how data flows through the system — from the moment a stock price is fe
 ```
                     ┌─────────────────┐
                     │  EventBridge    │
-                    │  (every 1 min) │
+                    │  (every 1 min)  │
                     └────────┬────────┘
                              │
                              ▼
                     ┌─────────────────┐     ┌──────────────┐
                     │  data_ingester  │────▶│   Kinesis    │
                     │  Lambda         │     │   Stream     │
-                    └─────────────────┘     └──────┬──────┘
+                    └─────────────────┘     └──────┬───────┘
                                                     │
               ┌─────────────────┬───────────────────┼───────────────────┐
               ▼                 ▼                   ▼                   ▼
@@ -41,14 +41,14 @@ Here's how data flows through the system — from the moment a stock price is fe
                              │
                              ▼
                     ┌─────────────────┐
-                    │ API Gateway +    │
-                    │ api_handler      │
+                    │ API Gateway +   │
+                    │ api_handler     │
                     │ Lambda          │
                     └────────┬────────┘
                              │
                              ▼
                     ┌─────────────────┐
-                    │ React dashboard  │
+                    │ React dashboard │
                     └─────────────────┘
 ```
 

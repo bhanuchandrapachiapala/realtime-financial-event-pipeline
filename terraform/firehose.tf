@@ -11,6 +11,7 @@ resource "aws_kinesis_firehose_delivery_stream" "s3_delivery" {
     role_arn   = aws_iam_role.firehose_role.arn
     bucket_arn = aws_s3_bucket.data_lake.arn
     prefix     = "raw-data/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"
+    error_output_prefix = "errors/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/!{firehose:error-output-type}/"
 
     buffering_size     = 5   # MB
     buffering_interval = 300 # seconds (5 min)

@@ -11,6 +11,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title   = "Lambda Invocations"
+          region  = "us-east-1"
           metrics = [
             ["AWS/Lambda", "Invocations", "FunctionName", aws_lambda_function.data_ingester.function_name],
             ["AWS/Lambda", "Invocations", "FunctionName", aws_lambda_function.price_processor.function_name],
@@ -29,6 +30,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title   = "Lambda Errors"
+          region  = "us-east-1"
           metrics = [
             ["AWS/Lambda", "Errors", "FunctionName", aws_lambda_function.data_ingester.function_name],
             ["AWS/Lambda", "Errors", "FunctionName", aws_lambda_function.price_processor.function_name],
@@ -46,6 +48,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title   = "Kinesis - Incoming Records"
+          region  = "us-east-1"
           metrics = [
             ["AWS/Kinesis", "IncomingRecords", "StreamName", aws_kinesis_stream.main.name]
           ]
@@ -61,6 +64,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title   = "DynamoDB - Write Capacity"
+          region  = "us-east-1"
           metrics = [
             ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", aws_dynamodb_table.live_prices.name],
             ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", aws_dynamodb_table.anomalies.name]

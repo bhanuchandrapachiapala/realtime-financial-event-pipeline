@@ -5,8 +5,19 @@ Uses DynamoDB (PRICES_TABLE, CANDLES_TABLE, ANOMALY_TABLE). Returns JSON with CO
 import json
 import os
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 
 import boto3
+
+
+class DecimalEncoder(json.JSONEncoder):
+    """JSON encoder that converts DynamoDB Decimal types to int or float."""
+
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return int(obj) if obj % 1 == 0 else float(obj)
+        return super().default(obj)
+
 
 SYMBOLS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA"]
 CORS_HEADERS = {
@@ -17,7 +28,7 @@ CORS_HEADERS = {
 
 
 def response(body, status_code=200):
-    return {"statusCode": status_code, "headers": CORS_HEADERS, "body": json.dumps(body)}
+    return {"statusCode": status_code, "headers": CORS_HEADERS, "body": json.dumps(body, cls=DecimalEncoder)}
 
 
 def error_response(message: str, status_code=400):
