@@ -1,5 +1,5 @@
 """
-Data Ingester Lambda — fetches live quotes from Alpha Vantage and pushes to Kinesis.
+Data Ingester Lambda — fetches live quotes from Finnhub and pushes to Kinesis.
 Triggered by EventBridge every 60 seconds.
 """
 import json
@@ -10,13 +10,13 @@ from urllib.error import URLError, HTTPError
 
 import boto3
 
-SYMBOLS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA"]
-GLOBAL_QUOTE_URL = "https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={apikey}"
+SYMBOLS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "META", "NVDA", "NFLX", "JPM", "V"]
+FINNHUB_QUOTE_URL = "https://finnhub.io/api/v1/quote?symbol={symbol}&token={api_key}"
 
 
 def fetch_quote(symbol: str, api_key: str) -> dict | None:
-    """Fetch GLOBAL_QUOTE for one symbol. Returns parsed record or None on failure."""
-    url = GLOBAL_QUOTE_URL.format(symbol=symbol, apikey=api_key)
+    """Fetch quote for one symbol from Finnhub. Returns parsed record or None on failure."""
+    url = FINNHUB_QUOTE_URL.format(symbol=symbol, api_key=api_key)
     req = Request(url, headers={"User-Agent": "FinPulse-Ingester/1.0"})
     try:
         with urlopen(req, timeout=10) as resp:
@@ -25,22 +25,21 @@ def fetch_quote(symbol: str, api_key: str) -> dict | None:
         print(f"Failed to fetch {symbol}: {e}")
         return None
 
-    quote = data.get("Global Quote")
-    if not quote or not isinstance(quote, dict):
+    if not isinstance(data, dict):
         return None
 
-    # Alpha Vantage GLOBAL_QUOTE uses keys like "05. price", "06. volume", "10. change percent"
-    price = quote.get("05. price", "").strip()
-    volume = quote.get("06. volume", "").strip()
-    change_pct = quote.get("10. change percent", "").strip().removesuffix("%")
+    # Finnhub quote: c (current price), v (volume), dp (percent change)
+    price_raw = data.get("c")
+    volume_raw = data.get("v")
+    change_pct_raw = data.get("dp")
 
-    if not price:
+    if price_raw is None:
         return None
 
     try:
-        price_f = float(price)
-        volume_f = int(volume) if volume else 0
-        change_f = float(change_pct) if change_pct else 0.0
+        price_f = float(price_raw)
+        volume_f = int(volume_raw) if volume_raw is not None else 0
+        change_f = float(change_pct_raw) if change_pct_raw is not None else 0.0
     except (ValueError, TypeError):
         return None
 
@@ -50,7 +49,7 @@ def fetch_quote(symbol: str, api_key: str) -> dict | None:
         "volume": volume_f,
         "change_percent": change_f,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "source": "alpha_vantage",
+        "source": "finnhub",
     }
 
 

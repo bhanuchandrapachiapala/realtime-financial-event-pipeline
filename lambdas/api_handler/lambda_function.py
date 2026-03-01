@@ -19,7 +19,7 @@ class DecimalEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-SYMBOLS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA"]
+SYMBOLS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "META", "NVDA", "NFLX", "JPM", "V"]
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
