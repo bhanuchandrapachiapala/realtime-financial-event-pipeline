@@ -1,146 +1,96 @@
-# ⚡ FinPulse — Real-Time Financial Event Processing Engine
+# Real-Time Financial Event Processing Engine
 
-I wanted to build something that processes live market data the way real trading systems do — streaming, event-driven, not just CRUD with a database. FinPulse is exactly that: a pipeline that pulls stock prices for AAPL, GOOGL, MSFT, AMZN, and TSLA every minute, streams them through AWS Kinesis, writes to DynamoDB and S3, detects price anomalies with Z-scores, and serves everything to a React dashboard. No polling a REST API every few seconds; events flow once and get consumed by multiple processors in parallel.
+I wanted to build something that processes live market data the way real trading systems do — streaming, event-driven, not just CRUD with a database. FinPulse is exactly that: a pipeline that pulls stock prices for 10 companies every minute, streams them through AWS Kinesis, writes to DynamoDB and S3, detects price anomalies using Z-scores, sends email alerts, and serves everything to a live React dashboard.
 
-## Architecture
-
-Here's how data flows through the system — from the moment a stock price is fetched to when it shows up on the dashboard or triggers an anomaly alert.
-
-```
-                    ┌─────────────────┐
-                    │  EventBridge    │
-                    │  (every 1 min)  │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐     ┌──────────────┐
-                    │  data_ingester  │────▶│   Kinesis    │
-                    │  Lambda         │     │   Stream     │
-                    └─────────────────┘     └──────┬───────┘
-                                                    │
-              ┌─────────────────┬───────────────────┼───────────────────┐
-              ▼                 ▼                   ▼                   ▼
-     ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-     │ price_       │  │ anomaly_     │  │ aggregator   │  │  Firehose    │
-     │ processor    │  │ detector     │  │ Lambda       │  │              │
-     └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
-            │                 │                 │                 │
-            ▼                 ▼                 ▼                 ▼
-     ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-     │ live_prices  │  │ anomalies    │  │ price_candles│  │  S3 data lake│
-     │ (DynamoDB)   │  │ (DynamoDB)   │  │ (DynamoDB)   │  │  (+ Athena)  │
-     └──────┬───────┘  └──────┬───────┘  └──────────────┘  └──────────────┘
-            │                 │
-            │                 ▼
-            │          ┌──────────────┐
-            │          │  SNS email   │
-            │          │  alerts      │
-            │          └──────────────┘
-            │
-            └────────────────┬─────────────────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │ API Gateway +   │
-                    │ api_handler     │
-                    │ Lambda          │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │ React dashboard │
-                    └─────────────────┘
-```
+**Live Dashboard:** [finpulse.vercel.app](https://realtime-financial-event-pipeline.vercel.app)
 
 ## How it works
 
-Every 60 seconds, EventBridge wakes up a Lambda function that grabs the latest prices from Alpha Vantage. Those prices get pushed into a Kinesis stream, where three separate Lambda consumers pick them up in parallel: one writes each record to the live_prices DynamoDB table, another builds OHLCV minute candles and writes to price_candles, and the third runs a Z-score check against the last 30 prices — if it crosses the threshold, it writes to the anomalies table and sends an email via SNS. At the same time, Firehose is reading from the same stream and archiving every event to S3 with date-partitioned paths. The React app talks to API Gateway, which invokes a single Lambda that reads from the three DynamoDB tables (and can eventually query S3 with Athena). So one event triggers multiple writers and one archive path; no duplicated API calls.
+Every 60 seconds, EventBridge wakes up a Lambda function that grabs the latest prices from Finnhub for AAPL, GOOGL, MSFT, AMZN, TSLA, META, NVDA, NFLX, JPM, and V. Those prices get pushed into a Kinesis stream, where four consumers pick them up in parallel:
 
-## The cool parts
+1. **Price Processor** writes each record to DynamoDB with a 7-day TTL so old data cleans itself up
+2. **Anomaly Detector** calculates Z-scores against the last 30 data points — if a stock moves more than 2.5 standard deviations from its mean, it writes to the anomalies table and fires an email through SNS. Severity is HIGH if Z > 3.5, MEDIUM otherwise
+3. **Aggregator** builds OHLCV candles (open, high, low, close, volume) per minute using conditional DynamoDB updates
+4. **Firehose** archives every single event to S3, partitioned by year/month/day — the cold storage layer you can query with Athena using plain SQL
 
-- **Anomaly detection** — The system calculates Z-scores against the last 30 price points. If something moves more than 2.5 standard deviations, you get an email. Severity is HIGH if Z > 3.5, else MEDIUM. Direction is SPIKE or DROP.
+The React dashboard talks to API Gateway, which invokes a Lambda that reads from the three DynamoDB tables. Auto-refreshes every 60 seconds to match the ingestion cycle. Dark theme, Bloomberg-terminal vibes.
 
-- **Data lake** — Every single event gets archived to S3 through Firehose (prefix like `raw-data/year=.../month=.../day=...`). You can query years of data with plain SQL through Athena. The dashboard has a demo query panel; wiring Athena to it is optional.
+## What makes this interesting
 
-- **Dashboard** — Auto-refreshes every 60 seconds, shows live prices, historical charts (1h / 6h / 24h), pipeline stats, and an anomaly alert feed. Dark theme, Bloomberg-terminal vibes.
+**The fan-out pattern** — One Kinesis stream, four independent consumers reading the same data for completely different purposes. If the anomaly detector fails, prices still get stored. If Firehose lags, the dashboard still works. Nothing is tightly coupled.
+
+**Anomaly detection** — Not just threshold-based ("alert if price > $X"). The Z-score approach adapts to each stock's own volatility. A $5 move on a $400 stock is normal, but the same move on a $20 stock is a red flag. The math handles this automatically.
+
+**Hot and cold storage** — DynamoDB for the last 7 days (fast reads, dashboard queries), S3 for everything ever (cheap, queryable with Athena). Two storage tiers for two different access patterns.
+
+**Infrastructure as code** — 13 Terraform files provision 42 AWS resources. One command to create everything, one command to destroy. No clicking around the console.
 
 ## Tech stack
 
-| AWS service      | What it does |
-|------------------|--------------|
-| EventBridge Scheduler | Fires the data ingester Lambda every 1 minute |
-| Lambda           | data_ingester (Alpha Vantage → Kinesis), price_processor, anomaly_detector, aggregator, api_handler |
-| Kinesis Data Streams | Buffers price events; multiple consumers read in parallel |
-| Firehose         | Streams Kinesis data to S3 (data lake) |
-| DynamoDB         | live_prices, price_candles, anomalies tables |
-| S3               | Raw event archive (lifecycle: 30d → IA, 90d → Glacier) |
-| SNS              | Email alerts when an anomaly is detected |
-| API Gateway (HTTP API) | Routes GET /prices, /prices/{symbol}, /anomalies, /candles/{symbol}, /stats to api_handler |
-| Athena (optional) | SQL over S3 data |
-
-## Project structure
-
-```
-.
-├── .github/workflows/
-│   └── deploy.yml          # CI: pytest, package Lambdas, terraform plan/apply
-├── frontend/                # React + Vite + Tailwind
-│   ├── src/
-│   │   ├── components/      # StatsBar, PriceTicker, PriceChart, AnomalyFeed, QueryPanel
-│   │   ├── services/
-│   │   │   └── api.js       # Axios wrapper for API
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   ├── package.json
-│   └── vite.config.js
-├── lambdas/
-│   ├── data_ingester/       # EventBridge → Alpha Vantage → Kinesis
-│   ├── price_processor/    # Kinesis → live_prices
-│   ├── anomaly_detector/   # Kinesis → Z-score → anomalies + SNS
-│   ├── aggregator/         # Kinesis → OHLCV candles
-│   └── api_handler/        # API Gateway → DynamoDB
-├── scripts/
-│   └── package_lambdas.sh  # Zip each Lambda for Terraform
-└── terraform/               # All infra (main, variables, outputs, per-service .tf files)
-```
-
-## Getting started
-
-First make sure you have AWS CLI configured and Terraform installed (1.5+). Grab a free API key from [Alpha Vantage](https://www.alphavantage.co/support/#api-key). Then:
-
-1. **Package the Lambdas**  
-   `bash scripts/package_lambdas.sh`
-
-2. **Deploy infra**  
-   From `terraform/`:  
-   `terraform init`  
-   `terraform plan -var="alpha_vantage_api_key=YOUR_KEY" -var="alert_email=you@example.com"`  
-   `terraform apply` (same vars)
-
-3. **Confirm SNS**  
-   Check your email and confirm the SNS subscription so anomaly alerts are delivered.
-
-4. **Run the frontend**  
-   In `frontend/`, set `.env`: `VITE_API_URL=https://your-api-gateway-url` (from Terraform output). Then `npm install && npm run dev`.
+| What | Why |
+|------|-----|
+| **Kinesis Data Streams** | Real-time streaming with parallel consumers. SQS would not work here — need multiple readers on the same data |
+| **Lambda (x5)** | Ingester, price processor, anomaly detector, aggregator, API handler. Serverless, scales to zero when idle |
+| **DynamoDB** | Fast reads for time-series data. On-demand billing, TTL for automatic cleanup, no connection pooling issues with Lambda |
+| **S3 + Firehose** | Firehose buffers and writes to S3 automatically. Lifecycle moves data to IA at 30 days, Glacier at 90 |
+| **EventBridge** | Cron-like scheduler for the 60-second ingestion cycle |
+| **SNS** | Email alerts when anomalies are detected |
+| **API Gateway** | HTTP API serving 5 REST endpoints to the dashboard |
+| **Athena** | Serverless SQL over the S3 data lake. Pay per query |
+| **CloudWatch** | Observability dashboard — Lambda invocations, errors, Kinesis throughput, DynamoDB writes |
+| **Terraform** | All 42 resources defined in code. Version controlled, repeatable, reviewable |
+| **GitHub Actions** | CI/CD — every push packages Lambdas and runs terraform apply |
+| **React + Vite + Tailwind** | Frontend dashboard deployed on Vercel |
+| **Finnhub API** | Free real-time stock data for 10 symbols |
 
 ## API endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /prices | Latest price for all 5 symbols |
-| GET | /prices/{symbol} | Price history (query: hours, limit) |
-| GET | /anomalies | Recent anomalies (query: limit) |
-| GET | /candles/{symbol} | OHLCV candles (query: hours, limit) |
-| GET | /stats | Pipeline stats (events/hour, anomalies 24h, status) |
+| Method | Path | What it returns |
+|--------|------|----------------|
+| GET | `/prices` | Latest price for all 10 symbols |
+| GET | `/prices/{symbol}` | Price history (query params: hours, limit) |
+| GET | `/anomalies` | Recent anomalies across all symbols |
+| GET | `/candles/{symbol}` | OHLCV candles (query params: hours, limit) |
+| GET | `/stats` | Pipeline health — events/hour, anomalies 24h, symbols tracked, status |
+
+## Getting started
+
+Make sure you have AWS CLI configured and Terraform 1.5+ installed. Get a free API key from [Finnhub](https://finnhub.io).
+
+```bash
+# Package Lambda functions
+bash scripts/package_lambdas.sh
+
+# Deploy everything to AWS
+cd terraform
+terraform init
+terraform plan -var="alpha_vantage_api_key=YOUR_FINNHUB_KEY" -var="alert_email=you@example.com"
+terraform apply    # same vars, type yes
+
+# Check your email and confirm the SNS subscription
+
+# Run the frontend
+cd ../frontend
+# Set .env: VITE_API_URL=<api_endpoint from terraform output>
+npm install && npm run dev
+```
+
+To stop all charges:
+```bash
+cd terraform
+terraform destroy -var="alpha_vantage_api_key=YOUR_KEY" -var="alert_email=YOUR_EMAIL"
+```
+
+Takes about 3 minutes to spin up, 2 minutes to tear down. I typically deploy before a demo and destroy after.
 
 ## Cost
 
-This whole thing runs on about $30–40/month on AWS. Kinesis is the biggest cost at ~$11/month for one shard. Everything else falls under free tier or costs pennies (Lambda, DynamoDB on-demand, S3, SNS). Firehose and data transfer add a bit; Athena you pay per query if you use it.
+The whole thing runs on about $30-40/month on AWS. Kinesis is the biggest cost at around $11/month for one shard. Lambda, DynamoDB, and S3 fall under free tier at this volume. Firehose and API Gateway add a few dollars. I keep it destroyed when not demoing and redeploy in 3 minutes when needed.
 
-## What I'd add next
+## What I would add next
 
-If I had more time, I'd add WebSocket push instead of polling so the dashboard updates the second new data lands, real ML-based anomaly detection instead of just Z-scores, and maybe a mobile app. Oh, and actually wiring the Athena query panel to run real SQL against the S3 bucket.
+WebSocket push instead of polling so the dashboard updates instantly. ML-based anomaly detection (isolation forest or LSTM) instead of just Z-scores. A mobile app for real-time alerts. And actually wiring the Athena query panel to run live SQL against the S3 data lake.
 
 ---
 
-Built by Bhanu Chandra Pachipala
+Built by **Bhanu Chandra Pachipala**
